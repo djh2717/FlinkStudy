@@ -1,3 +1,4 @@
+import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.JobExecutionResult;
 import org.apache.flink.api.common.RuntimeExecutionMode;
 import org.apache.flink.api.common.accumulators.IntCounter;
@@ -5,11 +6,15 @@ import org.apache.flink.api.common.eventtime.SerializableTimestampAssigner;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.functions.JoinFunction;
 import org.apache.flink.api.common.functions.MapFunction;
+import org.apache.flink.api.common.functions.ReduceFunction;
 import org.apache.flink.api.common.functions.RichMapFunction;
 import org.apache.flink.api.common.serialization.SimpleStringEncoder;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
+import org.apache.flink.api.common.state.AggregatingState;
 import org.apache.flink.api.common.state.MapStateDescriptor;
 import org.apache.flink.api.common.state.ReadOnlyBroadcastState;
+import org.apache.flink.api.common.state.ReducingState;
+import org.apache.flink.api.common.state.ReducingStateDescriptor;
 import org.apache.flink.api.common.typeinfo.TypeHint;
 import org.apache.flink.api.common.typeinfo.Types;
 import org.apache.flink.api.java.DataSet;
@@ -17,12 +22,18 @@ import org.apache.flink.api.java.ExecutionEnvironment;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.api.java.tuple.Tuple3;
 import org.apache.flink.api.java.typeutils.runtime.TupleSerializer;
+import org.apache.flink.api.java.utils.ParameterTool;
+import org.apache.flink.configuration.ConfigOption;
+import org.apache.flink.configuration.ConfigOptions;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.core.fs.Path;
+import org.apache.flink.streaming.api.CheckpointingMode;
 import org.apache.flink.streaming.api.datastream.BroadcastStream;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
+import org.apache.flink.streaming.api.datastream.IterativeStream;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
+import org.apache.flink.streaming.api.environment.CheckpointConfig;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.ProcessFunction;
 import org.apache.flink.streaming.api.functions.co.BroadcastProcessFunction;
@@ -44,6 +55,11 @@ import org.apache.flink.util.Collector;
 import org.apache.flink.util.IOUtils;
 import org.apache.flink.util.OutputTag;
 
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -74,7 +90,9 @@ public class StreamApplication {
 //        kafkaTest(env);
 
 //        kafkaTest(env);
-        kafkaToHdfsTest(env);
+//        kafkaToHdfsTest(env);
+//        iterateTest(env);
+//        paramTest(env);
 
         env.execute();
 
@@ -423,5 +441,141 @@ public class StreamApplication {
         evenOutputStream
                 .map(Tuple2::toString)
                 .addSink(stringStreamingFileSink_even);
+    }
+
+    private static void iterateTest(StreamExecutionEnvironment streamExecutionEnvironment) {
+        streamExecutionEnvironment.setParallelism(1);
+
+        DataStreamSource<Integer> source = streamExecutionEnvironment.fromElements(1, 2, 3, 4, 5, 12, 13, 14);
+
+        IterativeStream<Integer> iterate = source.iterate(5000);
+
+        OutputTag<Integer> lessThanTen = new OutputTag<Integer>("lessThanTen") {};
+
+        SingleOutputStreamOperator<Integer> process = iterate.process(new ProcessFunction<Integer, Integer>() {
+            @Override
+            public void processElement(Integer value, Context ctx, Collector<Integer> out) throws Exception {
+                if (value < 10) {
+                    ctx.output(lessThanTen, value);
+                } else {
+                    value--;
+                    out.collect(value);
+                }
+            }
+        });
+
+        iterate.closeWith(process);
+
+        DataStream<Integer> result = process.getSideOutput(lessThanTen);
+        result.print();
+    }
+
+    private static void paramTest(StreamExecutionEnvironment streamExecutionEnvironment) throws IOException {
+        ParameterTool parameterTool = ParameterTool.fromPropertiesFile("src/main/resources/flink-properties.properties");
+        String value1 = parameterTool.get("value1");
+        System.out.println(value1);
+
+
+        streamExecutionEnvironment.registerCachedFile("src/main/resources/cache_file.txt","cache_file");
+
+        Configuration configuration = new Configuration();
+        configuration.setString("par_test", "This is configuration test");
+        ExecutionConfig executionConfig = streamExecutionEnvironment.getConfig();
+        executionConfig.setGlobalJobParameters(configuration);
+
+        String localVar = "This is local var!";
+
+        DataStreamSource<Integer> intStream = streamExecutionEnvironment.fromElements(1, 23);
+
+        intStream.map(new RichMapFunction<Integer, String>() {
+
+            private String cache_file_value;
+            private String paramTest;
+            private  String localParam;
+
+            @Override
+            public void open(Configuration parameters) throws Exception {
+                File cache_file = getRuntimeContext().getDistributedCache().getFile("cache_file");
+                BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(new FileInputStream(cache_file)));
+                cache_file_value=bufferedReader.readLine();
+                bufferedReader.close();
+
+                // Get config param;
+                Configuration globalJobParameters = (Configuration) getRuntimeContext().getExecutionConfig().getGlobalJobParameters();
+                paramTest = globalJobParameters.getString(ConfigOptions.key("par_test").stringType().noDefaultValue());
+
+                localParam=localVar;
+            }
+
+            @Override
+            public String map(Integer value) throws Exception {
+                return "value->"+value+"\t localParam->"+localParam+"\t paramConfiguration->"+paramTest+"\t   cacheFile->"+cache_file_value;
+            }
+        }).print();
+
+    }
+
+    private static void reduceAndAggregatingStateTest(StreamExecutionEnvironment streamExecutionEnvironment) {
+        DataStreamSource<Tuple2<String, Integer>> data = streamExecutionEnvironment.fromElements(new Tuple2<String, Integer>("a", 1), new Tuple2<String, Integer>("a", 1), new Tuple2<String, Integer>("a", 1));
+
+        data
+                .keyBy(0)
+                .map(new RichMapFunction<Tuple2<String, Integer>, Tuple2<String,Integer>>() {
+            private ReducingState<Tuple2<String,Integer>> reducingState;
+
+            @Override
+            public void open(Configuration parameters) throws Exception {
+                ReducingStateDescriptor<Tuple2<String, Integer>> reduceStateDesc = new ReducingStateDescriptor<>("reduce_state", new ReduceFunction<Tuple2<String, Integer>>() {
+                    @Override
+                    public Tuple2<String, Integer> reduce(Tuple2<String, Integer> value1, Tuple2<String, Integer> value2) throws Exception {
+                        return new Tuple2<>(value1.f0, value1.f1 + value2.f1);
+                    }
+                }, Types.TUPLE(Types.STRING, Types.INT));
+                reducingState=getRuntimeContext().getReducingState(reduceStateDesc);
+            }
+
+            @Override
+            public Tuple2<String, Integer> map(Tuple2<String, Integer> value) throws Exception {
+                reducingState.add(value);
+
+                return reducingState.get();
+            }
+        })
+                .print();
+
+        // Aggregating state
+        data.keyBy(value -> value.f0)
+                .map(new RichMapFunction<Tuple2<String, Integer>, Integer>() {
+
+                    private AggregatingState<Tuple2<String,Integer>,Integer> aggregatingState;
+
+                    @Override
+                    public void open(Configuration parameters) throws Exception {
+
+                    }
+
+                    @Override
+                    public Integer map(Tuple2<String, Integer> value) throws Exception {
+
+                        return null;
+                    }
+                });
+    }
+
+    private static void checkpointConfigTest(StreamExecutionEnvironment streamExecutionEnvironment){
+        streamExecutionEnvironment.enableCheckpointing(5000);
+
+        CheckpointConfig checkpointConfig = streamExecutionEnvironment.getCheckpointConfig();
+        checkpointConfig.setMaxConcurrentCheckpoints(1);
+        checkpointConfig.setCheckpointTimeout(60000);
+        // 两次检查点操作最小间隔时间.
+        checkpointConfig.setMinPauseBetweenCheckpoints(10000);
+
+        checkpointConfig.setCheckpointingMode(CheckpointingMode.EXACTLY_ONCE);
+        // 作业取消后检查点是否保存.
+        checkpointConfig.enableExternalizedCheckpoints(CheckpointConfig.ExternalizedCheckpointCleanup.RETAIN_ON_CANCELLATION);
+        checkpointConfig.setTolerableCheckpointFailureNumber(3);
+
+
     }
 }

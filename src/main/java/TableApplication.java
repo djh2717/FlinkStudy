@@ -4,10 +4,13 @@ import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.table.api.EnvironmentSettings;
+import org.apache.flink.table.api.SqlDialect;
 import org.apache.flink.table.api.Table;
 import org.apache.flink.table.api.TableEnvironment;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
+import org.apache.flink.table.catalog.hive.HiveCatalog;
 import org.apache.flink.table.expressions.Expression;
+import org.apache.flink.table.functions.ScalarFunction;
 import org.apache.flink.types.Row;
 
 import java.time.ZoneId;
@@ -20,9 +23,11 @@ public class TableApplication {
     public static void main(String[] args) throws Exception {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
-        changeLogTable(env);
+//        changeLogTable(env);
+//        hiveTest();
+        flinkUdfTest();
 
-        env.execute();
+//        env.execute();
     }
 
 
@@ -33,6 +38,8 @@ public class TableApplication {
 
         EnvironmentSettings environmentSettings1 = EnvironmentSettings.newInstance().useBlinkPlanner().inBatchMode().build();
         TableEnvironment tableEnvironment = TableEnvironment.create(environmentSettings1);
+
+
     }
 
     private static void changeLogTable(StreamExecutionEnvironment env) {
@@ -42,7 +49,7 @@ public class TableApplication {
                 Row.of("mzd", 130),
                 Row.of("ylp", 150),
                 Row.of("djh", 100)
-                );
+        );
 
         StreamTableEnvironment streamTableEnvironment = StreamTableEnvironment.create(env);
 
@@ -57,6 +64,43 @@ public class TableApplication {
 
         resultDataStream.map(value -> value.f1)
                 .print();
+    }
+
+    private static void hiveTest() {
+        EnvironmentSettings build = EnvironmentSettings.newInstance().useBlinkPlanner().inBatchMode().build();
+        TableEnvironment tableEnvironment = TableEnvironment.create(build);
+
+        String name = "hive_test";
+        String defaultDatabase = "default";
+        String hiveConfDir = "/Users/djh/IdeaProjects/FlinkStudy/target/classes/";
+
+        HiveCatalog hive = new HiveCatalog(name, defaultDatabase, hiveConfDir);
+        tableEnvironment.registerCatalog("hive_test", hive);
+
+        // set the HiveCatalog as the current catalog of the session
+        tableEnvironment.useCatalog("hive_test");
+        tableEnvironment.getConfig().setSqlDialect(SqlDialect.HIVE);
+
+        tableEnvironment.executeSql("show databases").print();
+
+        tableEnvironment.executeSql("select vin, idle_start_time, idle_end_time, last_report_time, last_receive_time, dt" +
+                " from dwd_car_idle " +
+                "group by vin, idle_start_time, idle_end_time, last_report_time, last_receive_time, dt ").print();
+    }
+
+    private static void flinkUdfTest() {
+        EnvironmentSettings environmentSettings = EnvironmentSettings.newInstance().inBatchMode().useBlinkPlanner().build();
+        TableEnvironment tableEnvironment = TableEnvironment.create(environmentSettings);
+
+        tableEnvironment.createTemporaryFunction("MyFlinkUdf", MyFlinkUdf.class);
+
+        tableEnvironment.executeSql("select MyFlinkUdf()").print();
+    }
+
+    public static class MyFlinkUdf extends ScalarFunction {
+        public String eval() {
+            return "Hello! This is flink udf!";
+        }
     }
 
 }
