@@ -8,18 +8,34 @@
       <jdbc-url>jdbc:mysql://localhost:3306</jdbc-url>
       <working-dir>$ProjectFileDir$</working-dir>
     </data-source>
-    <data-source source="LOCAL" name="Apache Hive - @10.0.6.93" uuid="b5b67fb9-e387-41ba-ad40-87123d2550b3">
+    <data-source source="LOCAL" name="Apache Hive - @10.0.6.93" group="test" uuid="b5b67fb9-e387-41ba-ad40-87123d2550b3">
       <driver-ref>hive</driver-ref>
       <synchronize>true</synchronize>
       <jdbc-driver>com.cloudera.hive.jdbc4.HS2Driver</jdbc-driver>
       <jdbc-url>jdbc:hive2://10.0.6.93:10000</jdbc-url>
       <working-dir>$ProjectFileDir$</working-dir>
     </data-source>
-    <data-source source="LOCAL" name="Impala" uuid="64c0a153-501f-4614-95d5-e09c35e74085">
+    <data-source source="LOCAL" name="Impala - @10.0.6.93" group="test" uuid="64c0a153-501f-4614-95d5-e09c35e74085">
+      <driver-ref>java.sql.Driver</driver-ref>
       <synchronize>true</synchronize>
       <configured-by-url>true</configured-by-url>
       <jdbc-driver>com.cloudera.impala.jdbc41.Driver</jdbc-driver>
       <jdbc-url>jdbc:impala://10.0.6.93:21050/default</jdbc-url>
+      <working-dir>$ProjectFileDir$</working-dir>
+    </data-source>
+    <data-source source="LOCAL" name="Apache Hive - @172.16.30.101" group="product" uuid="56b655ce-30d2-4257-932e-9e725d7046ec">
+      <driver-ref>hive</driver-ref>
+      <synchronize>true</synchronize>
+      <jdbc-driver>com.cloudera.hive.jdbc4.HS2Driver</jdbc-driver>
+      <jdbc-url>jdbc:hive2://172.16.30.101:10000</jdbc-url>
+      <working-dir>$ProjectFileDir$</working-dir>
+    </data-source>
+    <data-source source="LOCAL" name="Impala - @172.16.10.33" group="product" uuid="0ce2dfc2-432a-4773-bebb-07d0cc30cd88">
+      <driver-ref>java.sql.Driver</driver-ref>
+      <synchronize>true</synchronize>
+      <configured-by-url>true</configured-by-url>
+      <jdbc-driver>com.cloudera.impala.jdbc41.Driver</jdbc-driver>
+      <jdbc-url>jdbc:impala://172.16.10.33:21050/default</jdbc-url>
       <working-dir>$ProjectFileDir$</working-dir>
     </data-source>
   </component>

@@ -15,6 +15,8 @@ import org.apache.flink.api.common.state.MapStateDescriptor;
 import org.apache.flink.api.common.state.ReadOnlyBroadcastState;
 import org.apache.flink.api.common.state.ReducingState;
 import org.apache.flink.api.common.state.ReducingStateDescriptor;
+import org.apache.flink.api.common.state.ValueState;
+import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.api.common.typeinfo.TypeHint;
 import org.apache.flink.api.common.typeinfo.Types;
 import org.apache.flink.api.java.DataSet;
@@ -27,6 +29,7 @@ import org.apache.flink.configuration.ConfigOption;
 import org.apache.flink.configuration.ConfigOptions;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.core.fs.Path;
+import org.apache.flink.runtime.state.filesystem.FsStateBackend;
 import org.apache.flink.streaming.api.CheckpointingMode;
 import org.apache.flink.streaming.api.datastream.BroadcastStream;
 import org.apache.flink.streaming.api.datastream.DataStream;
@@ -42,9 +45,12 @@ import org.apache.flink.streaming.api.functions.sink.filesystem.StreamingFileSin
 import org.apache.flink.streaming.api.functions.sink.filesystem.rollingpolicies.DefaultRollingPolicy;
 import org.apache.flink.streaming.api.functions.source.RichSourceFunction;
 import org.apache.flink.streaming.api.functions.windowing.AllWindowFunction;
+import org.apache.flink.streaming.api.windowing.assigners.GlobalWindows;
 import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows;
 import org.apache.flink.streaming.api.windowing.assigners.TumblingProcessingTimeWindows;
 import org.apache.flink.streaming.api.windowing.time.Time;
+import org.apache.flink.streaming.api.windowing.triggers.CountTrigger;
+import org.apache.flink.streaming.api.windowing.windows.GlobalWindow;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.streaming.connectors.kafka.FlinkKafkaConsumer;
 import org.apache.flink.streaming.connectors.kafka.FlinkKafkaProducer;
@@ -93,6 +99,8 @@ public class StreamApplication {
 //        kafkaToHdfsTest(env);
 //        iterateTest(env);
 //        paramTest(env);
+//        stateBackendTest(env);
+        countWindowTest(env);
 
         env.execute();
 
@@ -142,6 +150,30 @@ public class StreamApplication {
                 .window(TumblingEventTimeWindows.of(Time.seconds(10)))
                 .sum(1)
                 .print();
+    }
+
+    private static void countWindowTest(StreamExecutionEnvironment streamExecutionEnvironment) {
+        DataStreamSource<Integer> streamSource = streamExecutionEnvironment.addSource(new RichSourceFunction<Integer>() {
+            @Override
+            public void run(SourceContext<Integer> ctx) throws Exception {
+                while (true) {
+                    Thread.sleep(1000);
+                    ctx.collect(1);
+                }
+            }
+
+            @Override
+            public void cancel() {
+
+            }
+        });
+
+        streamSource
+                .windowAll(GlobalWindows.create())
+                .trigger(CountTrigger.of(3))
+                .sum(0)
+                .print();
+
     }
 
     private static void counterTest(StreamExecutionEnvironment env) throws Exception {
@@ -450,7 +482,8 @@ public class StreamApplication {
 
         IterativeStream<Integer> iterate = source.iterate(5000);
 
-        OutputTag<Integer> lessThanTen = new OutputTag<Integer>("lessThanTen") {};
+        OutputTag<Integer> lessThanTen = new OutputTag<Integer>("lessThanTen") {
+        };
 
         SingleOutputStreamOperator<Integer> process = iterate.process(new ProcessFunction<Integer, Integer>() {
             @Override
@@ -476,7 +509,7 @@ public class StreamApplication {
         System.out.println(value1);
 
 
-        streamExecutionEnvironment.registerCachedFile("src/main/resources/cache_file.txt","cache_file");
+        streamExecutionEnvironment.registerCachedFile("src/main/resources/cache_file.txt", "cache_file");
 
         Configuration configuration = new Configuration();
         configuration.setString("par_test", "This is configuration test");
@@ -491,25 +524,25 @@ public class StreamApplication {
 
             private String cache_file_value;
             private String paramTest;
-            private  String localParam;
+            private String localParam;
 
             @Override
             public void open(Configuration parameters) throws Exception {
                 File cache_file = getRuntimeContext().getDistributedCache().getFile("cache_file");
                 BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(new FileInputStream(cache_file)));
-                cache_file_value=bufferedReader.readLine();
+                cache_file_value = bufferedReader.readLine();
                 bufferedReader.close();
 
                 // Get config param;
                 Configuration globalJobParameters = (Configuration) getRuntimeContext().getExecutionConfig().getGlobalJobParameters();
                 paramTest = globalJobParameters.getString(ConfigOptions.key("par_test").stringType().noDefaultValue());
 
-                localParam=localVar;
+                localParam = localVar;
             }
 
             @Override
             public String map(Integer value) throws Exception {
-                return "value->"+value+"\t localParam->"+localParam+"\t paramConfiguration->"+paramTest+"\t   cacheFile->"+cache_file_value;
+                return "value->" + value + "\t localParam->" + localParam + "\t paramConfiguration->" + paramTest + "\t   cacheFile->" + cache_file_value;
             }
         }).print();
 
@@ -520,34 +553,34 @@ public class StreamApplication {
 
         data
                 .keyBy(0)
-                .map(new RichMapFunction<Tuple2<String, Integer>, Tuple2<String,Integer>>() {
-            private ReducingState<Tuple2<String,Integer>> reducingState;
+                .map(new RichMapFunction<Tuple2<String, Integer>, Tuple2<String, Integer>>() {
+                    private ReducingState<Tuple2<String, Integer>> reducingState;
 
-            @Override
-            public void open(Configuration parameters) throws Exception {
-                ReducingStateDescriptor<Tuple2<String, Integer>> reduceStateDesc = new ReducingStateDescriptor<>("reduce_state", new ReduceFunction<Tuple2<String, Integer>>() {
                     @Override
-                    public Tuple2<String, Integer> reduce(Tuple2<String, Integer> value1, Tuple2<String, Integer> value2) throws Exception {
-                        return new Tuple2<>(value1.f0, value1.f1 + value2.f1);
+                    public void open(Configuration parameters) throws Exception {
+                        ReducingStateDescriptor<Tuple2<String, Integer>> reduceStateDesc = new ReducingStateDescriptor<>("reduce_state", new ReduceFunction<Tuple2<String, Integer>>() {
+                            @Override
+                            public Tuple2<String, Integer> reduce(Tuple2<String, Integer> value1, Tuple2<String, Integer> value2) throws Exception {
+                                return new Tuple2<>(value1.f0, value1.f1 + value2.f1);
+                            }
+                        }, Types.TUPLE(Types.STRING, Types.INT));
+                        reducingState = getRuntimeContext().getReducingState(reduceStateDesc);
                     }
-                }, Types.TUPLE(Types.STRING, Types.INT));
-                reducingState=getRuntimeContext().getReducingState(reduceStateDesc);
-            }
 
-            @Override
-            public Tuple2<String, Integer> map(Tuple2<String, Integer> value) throws Exception {
-                reducingState.add(value);
+                    @Override
+                    public Tuple2<String, Integer> map(Tuple2<String, Integer> value) throws Exception {
+                        reducingState.add(value);
 
-                return reducingState.get();
-            }
-        })
+                        return reducingState.get();
+                    }
+                })
                 .print();
 
         // Aggregating state
         data.keyBy(value -> value.f0)
                 .map(new RichMapFunction<Tuple2<String, Integer>, Integer>() {
 
-                    private AggregatingState<Tuple2<String,Integer>,Integer> aggregatingState;
+                    private AggregatingState<Tuple2<String, Integer>, Integer> aggregatingState;
 
                     @Override
                     public void open(Configuration parameters) throws Exception {
@@ -562,7 +595,7 @@ public class StreamApplication {
                 });
     }
 
-    private static void checkpointConfigTest(StreamExecutionEnvironment streamExecutionEnvironment){
+    private static void checkpointConfigTest(StreamExecutionEnvironment streamExecutionEnvironment) {
         streamExecutionEnvironment.enableCheckpointing(5000);
 
         CheckpointConfig checkpointConfig = streamExecutionEnvironment.getCheckpointConfig();
@@ -578,4 +611,51 @@ public class StreamApplication {
 
 
     }
+
+    private static void stateBackendTest(StreamExecutionEnvironment streamExecutionEnvironment) {
+        streamExecutionEnvironment.enableCheckpointing(5000);
+        streamExecutionEnvironment.getCheckpointConfig().setMinPauseBetweenCheckpoints(5000);
+        streamExecutionEnvironment.getCheckpointConfig().setMaxConcurrentCheckpoints(1);
+
+        streamExecutionEnvironment.setStateBackend(new FsStateBackend("file:///Users/djh/IdeaProjects/FlinkStudy/src/main/resources/flink-checkpoints"));
+
+        DataStreamSource<Integer> data = streamExecutionEnvironment.addSource(new RichSourceFunction<Integer>() {
+            @Override
+            public void run(SourceContext<Integer> ctx) throws Exception {
+                while (true) {
+                    int value = (int) (Math.random() * 10);
+                    ctx.collect(value % 4);
+                    Thread.sleep(2000);
+                }
+            }
+
+            @Override
+            public void cancel() {
+
+            }
+        });
+
+        data.keyBy(value -> value)
+                .map(new RichMapFunction<Integer, Integer>() {
+                    private ValueState<Integer> state;
+
+                    @Override
+                    public void open(Configuration parameters) throws Exception {
+                        state = getRuntimeContext().getState(new ValueStateDescriptor<Integer>("int_state", Integer.class));
+                    }
+
+                    @Override
+                    public Integer map(Integer value) throws Exception {
+                        Integer value1 = state.value();
+                        if (value1 != null) {
+                            state.update(value1 + value);
+                        } else {
+                            state.update(value);
+                        }
+
+                        return state.value();
+                    }
+                }).printToErr();
+    }
+
 }

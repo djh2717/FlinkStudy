@@ -18,18 +18,12 @@ CREATE TABLE if not exists dwd_dc_hu_parse_data
 
 -- 暂无  2.6.5在线收音机播放排行       2.6.3搜索排行
 
--- 134217728 128M, 1073741824 1G
--- 执行前,合并小文件,让Map处理合适的数据量,启动合适数量的Map.
-set mapred.max.split.size=134217728;
-set mapred.min.split.size.per.node=134217728;
-set mapred.min.split.size.per.rack=134217728;
-set hive.input.format=org.apache.hadoop.hive.ql.io.CombineHiveInputFormat;
-
 ------------ Reduce配置 ------------
 -- Reduce 个数配置
 -- set mapred.reduce.tasks = 15;
 -- 设置每个reduce读取1G
 set hive.exec.reducers.bytes.per.reducer=1073741824;
+
 
 ------------ 小文件合并 ------------
 -- 设置map端输出进行合并，默认为true
@@ -38,6 +32,12 @@ set hive.merge.mapfiles = true;
 set hive.merge.mapredfiles = true;
 -- 当输出文件的平均大小小于该值时，启动一个独立的MapReduce任务进行文件merge
 set hive.merge.smallfiles.avgsize=134217728;
+-- 执行前,合并小文件,让Map处理合适的数据量,启动合适数量的Map.
+set mapred.max.split.size=134217728;
+set mapred.min.split.size.per.node=134217728;
+set mapred.min.split.size.per.rack=134217728;
+set hive.input.format=org.apache.hadoop.hive.ql.io.CombineHiveInputFormat;
+
 
 ------------ 压缩配置 ------------
 -- hive的查询结果输出是否进行压缩
@@ -45,14 +45,26 @@ set hive.exec.compress.output=true;
 --  MapReduce Job的结果输出是否使用压缩
 set mapreduce.output.fileoutputformat.compress=true;
 
+
 ------------ 其他配置 ------------
+-- 动态分区为非严格模式.
 set hive.exec.dynamic.partition.mode=nonstrict;
--- 打开任务并行执行，默认为false
+-- 打开任务并行执行，默认为false, 同一个sql允许最大并行度，默认为8
 set hive.exec.parallel=true;
--- 同一个sql允许最大并行度，默认为8
 set hive.exec.parallel.thread.number=16;
+// 本地模式,默认为false. 满足如下两个条件才开启本地模式.输入小于128M,Map个数小于10个.
+set hive.exec.mode.local.auto=true;
+set hive.exec.mode.local.auto.inputbytes.max=134217728;
+set hive.exec.mode.local.auto.tasks.max=10;
 -- JVM 重用
 set mapreduce.job.ubertask.enable=true;
+-- 开启向量批处理模式,CDH6默认为true.
+set hive.vectorized.execution.enabled=true;
+-- fetch设置为more,让更多的查询不走MR.
+set hive.fetch.task.conversion=more;
+
+-- 134217728 128M, 1073741824 1G
+
 
 ------------- 宽表  -------------
 CREATE TABLE if not exists dws_buried_point_wide_table
@@ -90,10 +102,11 @@ with a as (select vin,
      b as (select vin, if(customer_type = 0, "个人用户", "企业用户") as customer_type
            from dim_customer_type),
      c as (select substr(cur_date, 0, 10) as time_value, is_workday from dim_date),
-     e as (select a.*, b.customer_type, c.is_workday
+     e as (select a.*, b.customer_type, c.is_workday, tc.config_code
            from b
                     join a on a.vin = b.vin
-                    join c on a.time_value = c.time_value)
+                    join c on a.time_value = c.time_value
+                    join tmp_config tc on a.vin = tc.vin)
 insert
 overwrite
 table
@@ -106,7 +119,7 @@ select e.vin,
        e.time_value_with_hour,
        e.is_workday,
        e.model,
-       " ",
+       e.config_code,
        e.customer_type,
        e.app_name,
        e.module_name,

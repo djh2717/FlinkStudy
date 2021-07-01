@@ -1,19 +1,37 @@
+import org.apache.flink.api.java.DataSet;
 import org.apache.flink.api.java.ExecutionEnvironment;
+import org.apache.flink.api.java.operators.DataSource;
 import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.connectors.hive.HiveTableSink;
+import org.apache.flink.connectors.hive.HiveTableSource;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.table.api.DataTypes;
 import org.apache.flink.table.api.EnvironmentSettings;
 import org.apache.flink.table.api.SqlDialect;
 import org.apache.flink.table.api.Table;
 import org.apache.flink.table.api.TableEnvironment;
+import org.apache.flink.table.api.TableResult;
+import org.apache.flink.table.api.bridge.java.BatchTableEnvironment;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 import org.apache.flink.table.catalog.hive.HiveCatalog;
 import org.apache.flink.table.expressions.Expression;
 import org.apache.flink.table.functions.ScalarFunction;
+import org.apache.flink.table.sources.CsvTableSource;
+import org.apache.flink.table.types.DataType;
 import org.apache.flink.types.Row;
+import org.apache.flink.util.CloseableIterator;
 
 import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.function.Consumer;
+
+import static org.apache.flink.table.api.Expressions.$;
+import static org.apache.flink.table.api.Expressions.e;
+import static org.apache.flink.table.api.Expressions.lit;
 
 /**
  * @Author Djh on  2021/5/27 10:38
@@ -25,7 +43,12 @@ public class TableApplication {
 
 //        changeLogTable(env);
 //        hiveTest();
-        flinkUdfTest();
+//        flinkUdfTest();
+//        sinkHiveTest();
+//        bundleWithDatasetAndStream();
+//        hivePartitionTest();
+//        sinkHiveTest();
+        tableApiTest();
 
 //        env.execute();
     }
@@ -102,5 +125,113 @@ public class TableApplication {
             return "Hello! This is flink udf!";
         }
     }
+
+
+    private static void sinkHiveTest() {
+        EnvironmentSettings environmentSettings = EnvironmentSettings.newInstance().inBatchMode().useBlinkPlanner().build();
+        TableEnvironment tableEnvironment = TableEnvironment.create(environmentSettings);
+
+        String name = "hive_test";
+        String defaultDatabase = "default";
+        String hiveConfDir = "/Users/djh/IdeaProjects/FlinkStudy/target/classes/";
+
+        HiveCatalog hive = new HiveCatalog(name, defaultDatabase, hiveConfDir);
+        tableEnvironment.registerCatalog("hive_test", hive);
+        tableEnvironment.useCatalog("hive_test");
+        tableEnvironment.getConfig().setSqlDialect(SqlDialect.HIVE);
+
+
+        TableResult tableResult = tableEnvironment.executeSql("select name,sex,age from name_age_sex");
+        CloseableIterator<Row> collect = tableResult.collect();
+
+        ArrayList<Row> rows = new ArrayList<>();
+        collect.forEachRemaining(new Consumer<Row>() {
+            @Override
+            public void accept(Row row) {
+                if (((int) row.getField(2)) < 30) {
+                    rows.add(row);
+                }
+            }
+        });
+
+        Table table = tableEnvironment.fromValues(DataTypes.ROW(
+                DataTypes.FIELD("name", DataTypes.STRING()),
+                DataTypes.FIELD("sex", DataTypes.STRING()),
+                DataTypes.FIELD("age", DataTypes.INT())
+        ), rows);
+
+        Table noSexTable = table.dropColumns($("sex"));
+        noSexTable.executeInsert("name_age");
+    }
+
+    private static void hivePartitionTest() {
+        EnvironmentSettings environmentSettings = EnvironmentSettings.newInstance().inBatchMode().useBlinkPlanner().build();
+        TableEnvironment tableEnvironment = TableEnvironment.create(environmentSettings);
+
+        String name = "hive_test";
+        String defaultDatabase = "default";
+        String hiveConfDir = "/Users/djh/IdeaProjects/FlinkStudy/target/classes/";
+
+        HiveCatalog hive = new HiveCatalog(name, defaultDatabase, hiveConfDir);
+        tableEnvironment.registerCatalog("hive_test", hive);
+        tableEnvironment.useCatalog("hive_test");
+        tableEnvironment.getConfig().setSqlDialect(SqlDialect.HIVE);
+
+        List<Row> rows = Arrays.asList(Row.of("djh", "20210628"), Row.of("hyt", "20210629"));
+//        tableEnvironment.executeSql("set `hive.exec.dynamic.partition.mode=nonstrict`");
+        Table table = tableEnvironment.fromValues(DataTypes.ROW(
+                DataTypes.FIELD("name", DataTypes.STRING()),
+                DataTypes.FIELD("dt", DataTypes.STRING())
+        ), rows);
+        table.executeInsert("partition_test_table");
+    }
+
+    private static void bundleWithDatasetAndStream() throws Exception {
+        // with dataset
+        System.out.println("-------------------data set-------------------");
+        ExecutionEnvironment environment = ExecutionEnvironment.getExecutionEnvironment();
+        DataSource<Row> rowDataset = environment.fromElements(Row.of(1, "a"), Row.of(2, "b"));
+
+        BatchTableEnvironment batchTableEnvironment = BatchTableEnvironment.create(environment);
+        Table table = batchTableEnvironment.fromDataSet(rowDataset, $("num"), $("word"));
+        table.execute().print();
+
+        DataSet<Row> rowDataSet2 = batchTableEnvironment.toDataSet(table, Row.class);
+        rowDataSet2.print();
+
+
+        // with data stream
+        System.out.println("-------------------data stream-------------------");
+        StreamExecutionEnvironment streamExecutionEnvironment = StreamExecutionEnvironment.getExecutionEnvironment();
+        DataStreamSource<Integer> dataStream = streamExecutionEnvironment.fromElements(1, 2, 3, 4);
+
+        StreamTableEnvironment streamTableEnvironment = StreamTableEnvironment.create(streamExecutionEnvironment);
+        Table numberTable = streamTableEnvironment.fromDataStream(dataStream, $("number"));
+        numberTable.execute().print();
+
+        DataStream<Tuple2<Boolean, Integer>> tuple2DataStream = streamTableEnvironment.toRetractStream(numberTable, Integer.class);
+        DataStream<Integer> integerDataStream = streamTableEnvironment.toAppendStream(numberTable, Integer.class);
+        tuple2DataStream.print();
+        integerDataStream.print();
+    }
+
+    private static void tableApiTest() {
+        EnvironmentSettings environmentSettings = EnvironmentSettings.newInstance().inBatchMode().useBlinkPlanner().build();
+        TableEnvironment tableEnvironment = TableEnvironment.create(environmentSettings);
+
+        String name = "hive_test";
+        String defaultDatabase = "default";
+        String hiveConfDir = "/Users/djh/IdeaProjects/FlinkStudy/target/classes/";
+
+        HiveCatalog hive = new HiveCatalog(name, defaultDatabase, hiveConfDir);
+        tableEnvironment.registerCatalog("hive_test", hive);
+        tableEnvironment.useCatalog("hive_test");
+        tableEnvironment.getConfig().setSqlDialect(SqlDialect.HIVE);
+
+        tableEnvironment.from("tmp_region").select(
+                $("region_id")
+                ).where(lit(true).isTrue()).limit(10).execute().print();
+    }
+
 
 }
