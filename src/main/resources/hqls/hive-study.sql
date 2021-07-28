@@ -7,9 +7,16 @@ create temporary function udtf_test as "hive_udf.UdtfTest";
 select udtf_test(data_value)
 from dwd_dc_hu_parse_data;
 
-select *
-from dwd_dc_hu_parse_data;
 
+------------ Map配置 ------------
+-- 开启Map端聚合
+set hive.map.aggr = true;
+-- map端group by执行聚合时处理的多少行数据（默认：100000）
+set hive.groupby.mapaggr.checkinterval = 1000000;
+-- 是否对GroupBy产生的数据倾斜做优化
+set hive.groupby.skewindata = true;
+-- 开启自动转换成Map Join
+set hive.auto.convert.join = true
 
 
 ------------ Reduce配置 ------------
@@ -65,6 +72,7 @@ set hive.groupby.mapaggr.checkinterval;
 set hive.groupby.skewindata;
 set hive.input.format;
 set hive.exec.reducers.bytes.per.reducer;
+set hive.map.aggr;
 
 
 create table if not exists name_age_sex
@@ -96,3 +104,6 @@ create table if not exists partition_test_table
         fields terminated by ",";
 
 drop table partition_test_table;
+
+insert into name_age
+values ('djh', 23);

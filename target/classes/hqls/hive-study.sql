@@ -96,3 +96,6 @@ create table if not exists partition_test_table
         fields terminated by ",";
 
 drop table partition_test_table;
+
+insert into name_age
+values ('djh', 23);

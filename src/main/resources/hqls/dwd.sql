@@ -1,4 +1,5 @@
-create  table if not exists default.dwd_car_action
+drop table if exists default.dwd_car_action;
+create table if not exists default.dwd_car_action
 (
     vin                           string comment "Vehicle ID",
     time_value                    timestamp comment "Reporting time",
@@ -44,7 +45,9 @@ create  table if not exists default.dwd_car_action
     close_driverBelt_action       int comment "Tying the driver's seat belt",
     open_driverBelt_action        int comment "Solution of driving seat belt behavior",
     close_coDriverBelt_action     int comment "The act of tying the passenger seat belt",
-    open_coDriverBelt_action      int comment "Solve the seat belt behavior of the co-driver"
+    open_coDriverBelt_action      int comment "Solve the seat belt behavior of the co-driver",
+    epe_eventtime                 timestamp,
+    epe_eventcodes                string
 )
     partitioned by (dt string)
     stored as parquet;
@@ -78,11 +81,18 @@ with allData as (select vin,
                         v_driversizebeltstatus,
                         v_codriversizebeltstatus,
                         row_number() over (order by vin,time_value) as row_number
-from default.ods_analysis_data
-where dt = "20210531"),
-    a as (select * from allData),
-    b as (select * from allData)
-insert overwrite table default.dwd_car_action partition(dt = "20210531")
+                 from default.ods_analysis_data
+                 where dt = "20210531"),
+     a as (select * from allData),
+     b as (select * from allData)
+insert
+overwrite
+table
+default.dwd_car_action
+partition
+(
+dt = "20210531"
+)
 select c.vin_a,
        c.time_value_a,
        if(c.g_status_a = 2 and c.g_status_b = 1, 1, 0),
@@ -198,32 +208,84 @@ from (
                   join b
                        on a.vin = b.vin and a.row_number + 1 = b.row_number
                            and (
-                                      a.g_status != b.g_status or
-                                      a.g_speed != b.g_speed or
-                                      a.v_wheelangle != b.v_wheelangle or
-                                      a.v_doubleflashlightstatus != b.v_doubleflashlightstatus or
-                                      a.v_smalllightstatus != b.v_smalllightstatus or
-                                      a.v_dippedheadlightstatus != b.v_dippedheadlightstatus or
-                                      a.v_highbeamlightstatus != b.v_highbeamlightstatus or
-                                      a.v_leftturnlightstatus != b.v_leftturnlightstatus or
-                                      a.v_rightturnlightstatus != b.v_rightturnlightstatus or
-                                      a.v_brakebeamlightstatus != b.v_brakebeamlightstatus or
-                                      a.v_moodlightstatus != b.v_moodlightstatus or
-                                      a.p_vcureadylightsts != b.p_vcureadylightsts or
-                                      a.v_driversizedoorlockstatus != b.v_driversizedoorlockstatus or
-                                      a.v_codriversizedoorlockstatus !=
-                                      b.v_codriversizedoorlockstatus or
-                                      a.v_leftafterdoorlockstatus != b.v_leftafterdoorlockstatus or
-                                      a.v_rightafterdoorlockstatus != b.v_rightafterdoorlockstatus or
-                                      a.v_carboarlockstatus != b.v_carboarlockstatus or
-                                      a.v_skywindowstatus != b.v_skywindowstatus or
-                                      a.p_bmselectromagneticlocksts != b.p_bmselectromagneticlocksts or
-                                      a.v_airstatus != b.v_airstatus or
-                                      a.v_driversizebeltstatus != b.v_driversizebeltstatus or
-                                      a.v_codriversizebeltstatus != b.v_codriversizebeltstatus
+                                  a.g_status != b.g_status or
+                                  a.g_speed != b.g_speed or
+                                  a.v_wheelangle != b.v_wheelangle or
+                                  a.v_doubleflashlightstatus != b.v_doubleflashlightstatus or
+                                  a.v_smalllightstatus != b.v_smalllightstatus or
+                                  a.v_dippedheadlightstatus != b.v_dippedheadlightstatus or
+                                  a.v_highbeamlightstatus != b.v_highbeamlightstatus or
+                                  a.v_leftturnlightstatus != b.v_leftturnlightstatus or
+                                  a.v_rightturnlightstatus != b.v_rightturnlightstatus or
+                                  a.v_brakebeamlightstatus != b.v_brakebeamlightstatus or
+                                  a.v_moodlightstatus != b.v_moodlightstatus or
+                                  a.p_vcureadylightsts != b.p_vcureadylightsts or
+                                  a.v_driversizedoorlockstatus != b.v_driversizedoorlockstatus or
+                                  a.v_codriversizedoorlockstatus !=
+                                  b.v_codriversizedoorlockstatus or
+                                  a.v_leftafterdoorlockstatus != b.v_leftafterdoorlockstatus or
+                                  a.v_rightafterdoorlockstatus != b.v_rightafterdoorlockstatus or
+                                  a.v_carboarlockstatus != b.v_carboarlockstatus or
+                                  a.v_skywindowstatus != b.v_skywindowstatus or
+                                  a.p_bmselectromagneticlocksts != b.p_bmselectromagneticlocksts or
+                                  a.v_airstatus != b.v_airstatus or
+                                  a.v_driversizebeltstatus != b.v_driversizebeltstatus or
+                                  a.v_codriversizebeltstatus != b.v_codriversizebeltstatus
                               )) c;
 
+------------ Reduce配置 ------------
+-- Reduce 个数配置
+-- set mapred.reduce.tasks = 15;
+-- 设置每个reduce读取1G
+set hive.exec.reducers.bytes.per.reducer=1073741824;
 
+
+------------ 小文件合并 ------------
+-- 设置map端输出进行合并，默认为true
+set hive.merge.mapfiles = true;
+-- 设置reduce端输出进行合并，默认为false
+set hive.merge.mapredfiles = true;
+-- 当输出文件的平均大小小于该值时，启动一个独立的MapReduce任务进行文件merge
+set hive.merge.smallfiles.avgsize=134217728;
+-- 执行前,合并小文件,让Map处理合适的数据量,启动合适数量的Map.
+set mapred.max.split.size=134217728;
+set mapred.min.split.size.per.node=134217728;
+set mapred.min.split.size.per.rack=134217728;
+set hive.input.format=org.apache.hadoop.hive.ql.io.CombineHiveInputFormat;
+
+
+------------ 压缩配置 ------------
+-- hive的查询结果输出是否进行压缩
+set hive.exec.compress.output=true;
+--  MapReduce Job的结果输出是否使用压缩
+set mapreduce.output.fileoutputformat.compress=true;
+
+
+------------ 其他配置 ------------
+-- 动态分区为非严格模式.
+set hive.exec.dynamic.partition.mode=nonstrict;
+-- 打开任务并行执行，默认为false, 同一个sql允许最大并行度，默认为8
+set hive.exec.parallel=true;
+set hive.exec.parallel.thread.number=16;
+// 本地模式,默认为false. 满足如下两个条件才开启本地模式.输入小于128M,Map个数小于10个.
+set hive.exec.mode.local.auto=true;
+set hive.exec.mode.local.auto.inputbytes.max=134217728;
+set hive.exec.mode.local.auto.tasks.max=10;
+-- JVM 重用
+set mapreduce.job.ubertask.enable=true;
+-- 开启向量批处理模式,CDH6默认为true.
+set hive.vectorized.execution.enabled=true;
+-- fetch设置为more,让更多的查询不走MR.
+set hive.fetch.task.conversion=more;
+
+-- 134217728 128M, 1073741824 1G
+
+
+set hive.map.aggr;
+set hive.groupby.mapaggr.checkinterval;
+set hive.groupby.skewindata;
+set hive.input.format;
+set hive.exec.reducers.bytes.per.reducer;
 -- 优化后
 with a as (select vin,
                   time_value,
@@ -250,11 +312,19 @@ with a as (select vin,
                   v_driversizebeltstatus,
                   v_codriversizebeltstatus,
                   row_number() over (order by vin,time_value) as row_number,
+                  epe_eventcodes,
                   dt
-from default.ods_analysis_data
-where dt between "20210529" and "20210601"),
-    b as (select * from a)
-insert overwrite table default.dwd_car_action partition(dt)
+           from default.ods_analysis_data
+           where dt between "20210703" and "20210705"),
+     b as (select * from a)
+insert
+overwrite
+table
+default.dwd_car_action
+partition
+(
+dt
+)
 select *
 from (select a.vin,
              a.time_value,
@@ -355,6 +425,8 @@ from (select a.vin,
                 0)                                             as v_codriversizebeltstatus_open_action,
              if(a.v_codriversizebeltstatus = 1 and b.v_codriversizebeltstatus = 0, 1,
                 0)                                             as v_codriversizebeltstatus_close__actioclose_,
+             a.time_value                                      as event_time,
+             a.epe_eventcodes,
              a.dt
       from a
                join b
@@ -420,59 +492,6 @@ where c.g_status_open_action != 0
    or c.v_codriversizebeltstatus_open_action != 0;
 
 
-
--- 清空语句
-insert overwrite table dwd_car_action partition(dt="20210531")
-select vin,
-       time_value,
-       start_action,
-       stop_action,
-       quick_accelerate_action,
-       quick_down_action,
-       quick_turn_action,
-       open_double_openLight_action,
-       close_double_openLight_action,
-       open_smallLight_action,
-       close_smallLight_action,
-       open_dippedLight_action,
-       close_dippedLight_action,
-       open_highBeamLight_action,
-       close_highBeamLight_action,
-       open_leftTurnLight_action,
-       close_leftTurnLight_action,
-       open_rightTurnLight_action,
-       close_rightTurnLight_action,
-       open_breakLight_action,
-       close_breakLight_action,
-       open_moodLight_action,
-       close_moodLight_action,
-       open_dynamicLight_action,
-       close_dynamicLight_action,
-       open_driverDoor_action,
-       close_driverDoor_action,
-       open_coDriverDoor_action,
-       close_coDriverDoor_action,
-       open_leftAfterDoor_action,
-       close_leftAfterDoor_action,
-       open_rightAfterDoor_action,
-       close_rightAfterDoor_action,
-       open_endDoor_action,
-       close_endDoor_action,
-       open_skyWindow_action,
-       close_skyWindow_action,
-       close_lock_action,
-       open_lock_action,
-       open_airCondition_action,
-       close_airCondition_action,
-       close_driverBelt_action,
-       open_driverBelt_action,
-       close_coDriverBelt_action,
-       open_coDriverBelt_action
-from dwd_car_action
-where 1=0;
-
-
-
 -- 验证
 with a as (select vin,
                   time_value,
@@ -499,29 +518,29 @@ with a as (select vin,
                   v_driversizebeltstatus,
                   v_codriversizebeltstatus,
                   row_number() over (order by vin,time_value) as row_number
-from default.ods_analysis_data
-where dt = "20210531"),
-    b as (select * from a)
+           from default.ods_analysis_data
+           where dt = "20210531"),
+     b as (select * from a)
 select a.vin, b.vin, a.time_value, b.time_value, a.g_status, b.g_status
 from a
          join b on a.row_number + 1 = b.row_number and a.vin = b.vin
 limit 1000 offset 5000;
 
 
-
 --------------------------- 报警表
 drop table dwd_car_alarm;
-create table if not exists default.dwd_car_alarm(
-    vin string,
-    time_value timestamp,
-    alarm_name string,
-    alarm_category string,
-    alarm_duration string,
+create table if not exists default.dwd_car_alarm
+(
+    vin              string,
+    time_value       timestamp,
+    alarm_name       string,
+    alarm_category   string,
+    alarm_duration   string,
     alarm_start_time timestamp,
-    alarm_stop_time timestamp
+    alarm_stop_time  timestamp
 )
-partitioned by (dt string)
-stored as parquet;
+    partitioned by (dt string)
+    stored as parquet;
 
 select a_alarmgeneralalarmflag,
        a_alarmmaxalarmlevel,
@@ -543,20 +562,12 @@ select vin,
 --                    over (partition by vin, a_alarmgeneralalarmflag,a_alarmmaxalarmlevel ),
 --        last_value(time_value) over (partition by vin, a_alarmgeneralalarmflag,a_alarmmaxalarmlevel)
 from ods_analysis_data
-where  a_alarmgeneralalarmflag != 0
+where a_alarmgeneralalarmflag != 0
   and a_alarmmaxalarmlevel != 0
 order by vin,
          a_alarmgeneralalarmflag,
          a_alarmmaxalarmlevel,
          time_value;
-
-
-
-
-
-
-
-
 
 
 --------------------------- 闲置表
@@ -575,7 +586,7 @@ create table if not exists default.dwd_car_idle
 
 set hive.exec.dynamic.partition.mode=nonstrict;
 with a as (select vin, time_value, g_status, a_rectime, dt
-           from ods_analysis_data ),
+           from ods_analysis_data),
      b as (select vin, dt, max(time_value) as idle_start_time
            from a
            where g_status = 1
@@ -598,7 +609,14 @@ with a as (select vin, time_value, g_status, a_rectime, dt
            from d
                     left join a on a.vin = d.vin and a.dt = d.dt
            group by d.dt, d.vin, d.idle_start_time, d.idle_end_time)
-insert overwrite table dwd_car_idle partition(dt)
+insert
+overwrite
+table
+dwd_car_idle
+partition
+(
+dt
+)
 select e.vin,
        e.idle_start_time,
        e.idle_end_time,
@@ -622,7 +640,8 @@ with a as (select vin, time_value, g_status, a_rectime, dt
            group by a.vin),
      d as (select b.dt, b.vin, b.idle_start_time, c.idle_end_time
            from b
-                    join c on b.vin = c.vin where b.idle_start_time < c.idle_end_time),
+                    join c on b.vin = c.vin
+           where b.idle_start_time < c.idle_end_time),
      e as (select d.dt,
                   d.vin,
                   d.idle_start_time,
@@ -632,7 +651,8 @@ with a as (select vin, time_value, g_status, a_rectime, dt
            from a
                     join d on a.vin = d.vin and a.dt = d.dt
            group by d.dt, d.vin, d.idle_start_time, d.idle_end_time)
-select * from e;
+select *
+from e;
 
 
 with a as (select vin, time_value, g_status, a_rectime, dt

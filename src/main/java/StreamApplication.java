@@ -1,16 +1,20 @@
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.JobExecutionResult;
-import org.apache.flink.api.common.RuntimeExecutionMode;
 import org.apache.flink.api.common.accumulators.IntCounter;
 import org.apache.flink.api.common.eventtime.SerializableTimestampAssigner;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
+import org.apache.flink.api.common.functions.CoGroupFunction;
 import org.apache.flink.api.common.functions.JoinFunction;
 import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.common.functions.ReduceFunction;
+import org.apache.flink.api.common.functions.RichGroupReduceFunction;
 import org.apache.flink.api.common.functions.RichMapFunction;
+import org.apache.flink.api.common.functions.RichReduceFunction;
 import org.apache.flink.api.common.serialization.SimpleStringEncoder;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
 import org.apache.flink.api.common.state.AggregatingState;
+import org.apache.flink.api.common.state.ListState;
+import org.apache.flink.api.common.state.ListStateDescriptor;
 import org.apache.flink.api.common.state.MapStateDescriptor;
 import org.apache.flink.api.common.state.ReadOnlyBroadcastState;
 import org.apache.flink.api.common.state.ReducingState;
@@ -38,6 +42,7 @@ import org.apache.flink.streaming.api.datastream.IterativeStream;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.CheckpointConfig;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.streaming.api.functions.ProcessFunction;
 import org.apache.flink.streaming.api.functions.co.BroadcastProcessFunction;
 import org.apache.flink.streaming.api.functions.co.CoFlatMapFunction;
@@ -45,6 +50,7 @@ import org.apache.flink.streaming.api.functions.sink.filesystem.StreamingFileSin
 import org.apache.flink.streaming.api.functions.sink.filesystem.rollingpolicies.DefaultRollingPolicy;
 import org.apache.flink.streaming.api.functions.source.RichSourceFunction;
 import org.apache.flink.streaming.api.functions.windowing.AllWindowFunction;
+import org.apache.flink.streaming.api.functions.windowing.ProcessAllWindowFunction;
 import org.apache.flink.streaming.api.windowing.assigners.GlobalWindows;
 import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows;
 import org.apache.flink.streaming.api.windowing.assigners.TumblingProcessingTimeWindows;
@@ -74,6 +80,8 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 
+import utils.DataProductUtil;
+
 
 /**
  * @Author Djh on  2021/5/20 10:36
@@ -83,7 +91,8 @@ public class StreamApplication {
     public static void main(String[] args) throws Exception {
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        env.setRuntimeMode(RuntimeExecutionMode.STREAMING);
+        env.setParallelism(4);
+//        env.setRuntimeMode(RuntimeExecutionMode.STREAMING);
 
 //        connect(env);
 
@@ -100,7 +109,11 @@ public class StreamApplication {
 //        iterateTest(env);
 //        paramTest(env);
 //        stateBackendTest(env);
-        countWindowTest(env);
+//        countWindowTest(env);
+//        stateTest(env);
+//        joinAndCoGroup(env);
+//        eventTimeWindows(env);
+        timerTest(env);
 
         env.execute();
 
@@ -380,7 +393,7 @@ public class StreamApplication {
         properties.setProperty("group.id", "flink-kafka-consumer");
         FlinkKafkaConsumer<String> consumer = new FlinkKafkaConsumer<>("TestComposeTopic", new SimpleStringSchema(), properties);
         // default
-        consumer.setStartFromGroupOffsets();
+//        consumer.setStartFromGroupOffsets();
 
         DataStream<String> stream = streamExecutionEnvironment
                 .addSource(consumer);
@@ -412,7 +425,7 @@ public class StreamApplication {
         properties.setProperty("bootstrap.servers", "localhost:9092");
         properties.setProperty("group.id", "flink-kafka-consumer");
         FlinkKafkaConsumer<String> kafkaConsumer = new FlinkKafkaConsumer<>("TestComposeTopic", new SimpleStringSchema(), properties);
-        kafkaConsumer.setStartFromEarliest();
+//        kafkaConsumer.setStartFromEarliest();
 
         DataStreamSource<String> data = streamExecutionEnvironment.addSource(kafkaConsumer);
         streamExecutionEnvironment.enableCheckpointing(6000L);
@@ -657,5 +670,145 @@ public class StreamApplication {
                     }
                 }).printToErr();
     }
+
+    private static void stateTest(StreamExecutionEnvironment environment) throws Exception {
+        DataStream<Tuple2<Integer, String>> dataStream = DataProductUtil.getDataStreamOfTuple2(environment);
+
+        ValueStateDescriptor<Integer> integerValueStateDescriptor = new ValueStateDescriptor<>("int_value", Integer.class);
+
+        dataStream.keyBy(value -> value.f0)
+                .reduce(new RichReduceFunction<Tuple2<Integer, String>>() {
+                    ValueState<Integer> state;
+
+                    @Override
+                    public void open(Configuration parameters) throws Exception {
+                        state = getRuntimeContext().getState(integerValueStateDescriptor);
+                    }
+
+                    @Override
+                    public Tuple2<Integer, String> reduce(Tuple2<Integer, String> value1, Tuple2<Integer, String> value2) throws Exception {
+                        if (state.value() != null) {
+                            state.update(state.value() + 1);
+                        } else {
+                            state.update(1);
+                        }
+
+                        return value1;
+                    }
+                })
+                .keyBy(value -> value.f0)
+                .map(new RichMapFunction<Tuple2<Integer, String>, Object>() {
+                    ValueState<Integer> state;
+
+                    @Override
+                    public void open(Configuration parameters) throws Exception {
+                        state = getRuntimeContext().getState(integerValueStateDescriptor);
+                    }
+
+                    @Override
+                    public Object map(Tuple2<Integer, String> value) throws Exception {
+                        state.update(1);
+                        return state.value();
+                    }
+                })
+                .print();
+    }
+
+    private static void remoteTest() throws Exception {
+        // 172.16.30.103:8032
+        StreamExecutionEnvironment remoteEnvironment = StreamExecutionEnvironment.createRemoteEnvironment("172.16.10.35", 37223, "/Users/djh/IdeaProjects/FlinkStudy/target/FlinkStudy-1.0-SNAPSHOT.jar");
+
+        remoteEnvironment.fromElements(1, 2, 3, 4).print();
+
+        remoteEnvironment.execute();
+    }
+
+    private static void joinAndCoGroup(StreamExecutionEnvironment environment) {
+        DataStream<Tuple2<Integer, String>> dataStreamOne = DataProductUtil.getUnlimitedDataStreamOne(environment);
+        DataStream<Tuple2<Integer, String>> dataStreamTwo = DataProductUtil.getUnlimitedDataStreamTwo(environment);
+
+        // cogroup 和 join 操作的区别在于， join操作就是 SQL 里面的 join语义，批和流都可以，有inner join 和 outer join，流处理要加窗口，因为数据无限，批处理很好理解。
+        // 而 cogroup 和join不一样, cogroup 就是把两个流中，一个窗口内，指定键相等的元素放在一起处理，如果其中一个窗口中，没有和另外一个窗口中相等的键数据，那么就会单独把这一部分数据独自处理，不像 join语义那样会丢失。
+        // 所以你看 coGroup的处理函数中接受的参数都是 iterable,就是存储中第一个流和第二个流中同一个窗口,相同键的这两组数据.
+
+        dataStreamOne.coGroup(dataStreamTwo)
+                .where(value -> value.f0)
+                .equalTo(value -> value.f0)
+                .window(TumblingProcessingTimeWindows.of(Time.seconds(3)))
+                .apply((CoGroupFunction<Tuple2<Integer, String>, Tuple2<Integer, String>, String>) (first, second, out) ->
+                        out.collect(first.toString() + "     " + second.toString()), Types.STRING)
+                .print();
+
+//        dataStreamOne.join(dataStreamTwo)
+//                .where(value -> value.f0)
+//                .equalTo(value -> value.f0)
+//                .window(TumblingProcessingTimeWindows.of(Time.seconds(3)))
+//                .apply((JoinFunction<Tuple2<Integer, String>, Tuple2<Integer, String>, String>) (first, second) ->
+//                        first + "     " + second, Types.STRING)
+//                .print();
+
+    }
+
+    private static void eventTimeWindows(StreamExecutionEnvironment environment) {
+        environment.enableCheckpointing(5000);
+        environment.getCheckpointConfig().setMinPauseBetweenCheckpoints(3000);
+
+        DataStream<Tuple2<Integer, String>> dataStream = DataProductUtil.getWaterMarkData(environment);
+
+        WatermarkStrategy<Tuple2<Integer, String>> watermarkStrategy = WatermarkStrategy.forBoundedOutOfOrderness(Duration.ofSeconds(2));
+
+        OutputTag<Tuple2<Integer, String>> outputTag = new OutputTag<Tuple2<Integer, String>>("string-output-tag") {
+        };
+
+        SingleOutputStreamOperator<String> process = dataStream.assignTimestampsAndWatermarks(watermarkStrategy)/*.slotSharingGroup("my-slot")*/
+                .windowAll(TumblingEventTimeWindows.of(Time.seconds(3))).allowedLateness(Time.seconds(1))
+                .sideOutputLateData(outputTag)
+                .process(new ProcessAllWindowFunction<Tuple2<Integer, String>, String, TimeWindow>() {
+
+                    private ListState<String> stringListState;
+
+
+                    @Override
+                    public void open(Configuration parameters) throws Exception {
+                        stringListState = getRuntimeContext().getListState(new ListStateDescriptor<String>("string-list-state", Types.STRING));
+                    }
+
+                    @Override
+                    public void process(Context context, Iterable<Tuple2<Integer, String>> elements, Collector<String> out) throws Exception {
+                        System.out.println(context.window().getStart() + "   " + context.window().getEnd());
+
+                        out.collect(elements.toString());
+                        stringListState.add(elements.toString());
+                    }
+                }, Types.STRING);
+
+        DataStream<Tuple2<Integer, String>> lateData = process.getSideOutput(outputTag);
+
+        process.print().setParallelism(1);
+        lateData.print().setParallelism(1);
+    }
+
+    private static void timerTest(StreamExecutionEnvironment environment) {
+        DataStream<Tuple2<Integer, String>> stream = DataProductUtil.getUnlimitedDataStreamOne(environment);
+        stream.keyBy(value -> value.f0)
+                .process(new KeyedProcessFunction<Integer, Tuple2<Integer, String>, String>() {
+
+                    @Override
+                    public void onTimer(long timestamp, OnTimerContext ctx, Collector<String> out) throws Exception {
+                        System.out.println("--------- On Timer 回调 ---------" + timestamp);
+                    }
+
+                    @Override
+                    public void processElement(Tuple2<Integer, String> value, Context ctx, Collector<String> out) throws Exception {
+                        System.out.println("------------process-----------" + ctx.timestamp());
+                        ctx.timerService().registerProcessingTimeTimer(ctx.timestamp() + 2000);
+                    }
+                })
+                .print();
+
+
+    }
+
+
 
 }

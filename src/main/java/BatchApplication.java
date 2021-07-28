@@ -3,11 +3,17 @@ import org.apache.flink.api.common.functions.FlatMapFunction;
 import org.apache.flink.api.common.functions.GroupReduceFunction;
 import org.apache.flink.api.common.functions.JoinFunction;
 import org.apache.flink.api.common.functions.MapPartitionFunction;
+import org.apache.flink.api.common.functions.RichGroupReduceFunction;
+import org.apache.flink.api.common.functions.RichMapFunction;
+import org.apache.flink.api.common.state.ValueState;
+import org.apache.flink.api.common.state.ValueStateDescriptor;
+import org.apache.flink.api.common.typeinfo.Types;
 import org.apache.flink.api.java.DataSet;
 import org.apache.flink.api.java.ExecutionEnvironment;
 import org.apache.flink.api.java.operators.DataSource;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.api.java.utils.DataSetUtils;
+import org.apache.flink.configuration.Configuration;
 import org.apache.flink.connectors.hive.HiveTableSource;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.table.api.TableEnvironment;
@@ -16,6 +22,8 @@ import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 import org.apache.flink.util.Collector;
 
 import java.util.ArrayList;
+
+import utils.DataProductUtil;
 
 /**
  * @Author Djh on  2021/5/24 16:26
@@ -28,7 +36,7 @@ public class BatchApplication {
 //        coGroupTest(env);
 //        outerJoin(env);
 //        zipTest(env);
-        hdfsFileTest(env);
+//        hdfsFileTest(env);
 
         env.execute();
     }
@@ -171,4 +179,6 @@ public class BatchApplication {
                 .print();
 
     }
+
+
 }

@@ -9,6 +9,7 @@ import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.table.api.DataTypes;
 import org.apache.flink.table.api.EnvironmentSettings;
+import org.apache.flink.table.api.Expressions;
 import org.apache.flink.table.api.SqlDialect;
 import org.apache.flink.table.api.Table;
 import org.apache.flink.table.api.TableEnvironment;
@@ -48,7 +49,8 @@ public class TableApplication {
 //        bundleWithDatasetAndStream();
 //        hivePartitionTest();
 //        sinkHiveTest();
-        tableApiTest();
+//        tableApiTest();
+        hiveTest();
 
 //        env.execute();
     }
@@ -95,7 +97,7 @@ public class TableApplication {
 
         String name = "hive_test";
         String defaultDatabase = "default";
-        String hiveConfDir = "/Users/djh/IdeaProjects/FlinkStudy/target/classes/";
+        String hiveConfDir = "/Users/djh_mac/Desktop/FlinkStudy/src/main/resources/";
 
         HiveCatalog hive = new HiveCatalog(name, defaultDatabase, hiveConfDir);
         tableEnvironment.registerCatalog("hive_test", hive);
@@ -133,7 +135,7 @@ public class TableApplication {
 
         String name = "hive_test";
         String defaultDatabase = "default";
-        String hiveConfDir = "/Users/djh/IdeaProjects/FlinkStudy/target/classes/";
+        String hiveConfDir = "/Users/djh_mac/Desktop/FlinkStudy/src/main/resources/";
 
         HiveCatalog hive = new HiveCatalog(name, defaultDatabase, hiveConfDir);
         tableEnvironment.registerCatalog("hive_test", hive);
@@ -170,7 +172,7 @@ public class TableApplication {
 
         String name = "hive_test";
         String defaultDatabase = "default";
-        String hiveConfDir = "/Users/djh/IdeaProjects/FlinkStudy/target/classes/";
+        String hiveConfDir = "/Users/djh_mac/Desktop/FlinkStudy/src/main/resources/";
 
         HiveCatalog hive = new HiveCatalog(name, defaultDatabase, hiveConfDir);
         tableEnvironment.registerCatalog("hive_test", hive);
@@ -221,7 +223,7 @@ public class TableApplication {
 
         String name = "hive_test";
         String defaultDatabase = "default";
-        String hiveConfDir = "/Users/djh/IdeaProjects/FlinkStudy/target/classes/";
+        String hiveConfDir = "/Users/djh_mac/Desktop/FlinkStudy/src/main/resources/";
 
         HiveCatalog hive = new HiveCatalog(name, defaultDatabase, hiveConfDir);
         tableEnvironment.registerCatalog("hive_test", hive);
@@ -229,8 +231,9 @@ public class TableApplication {
         tableEnvironment.getConfig().setSqlDialect(SqlDialect.HIVE);
 
         tableEnvironment.from("tmp_region").select(
-                $("region_id")
-                ).where(lit(true).isTrue()).limit(10).execute().print();
+                $("region_id"),
+                lit(123).as("Number value")
+        ).where(lit(true).isTrue());
     }
 
 
