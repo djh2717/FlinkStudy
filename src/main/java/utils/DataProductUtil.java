@@ -142,6 +142,8 @@ public class DataProductUtil {
                     ctx.collectWithTimestamp(Tuple2.of(1, "a"), now + 1);
                     ctx.collectWithTimestamp(Tuple2.of(2, "b"), now + 100);
                     ctx.collectWithTimestamp(Tuple2.of(3, "c"), now + 30);
+                    ctx.collectWithTimestamp(Tuple2.of(3, "c"), now + 30);
+                    ctx.collectWithTimestamp(Tuple2.of(3, "c"), now + 30);
                     ctx.collectWithTimestamp(Tuple2.of(3, "c-2"), now + 10);
 
                     // 模拟迟到数据, 三秒之后,发送一条时间戳为三秒之前的数据.

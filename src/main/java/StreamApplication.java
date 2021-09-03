@@ -10,6 +10,7 @@ import org.apache.flink.api.common.functions.ReduceFunction;
 import org.apache.flink.api.common.functions.RichGroupReduceFunction;
 import org.apache.flink.api.common.functions.RichMapFunction;
 import org.apache.flink.api.common.functions.RichReduceFunction;
+import org.apache.flink.api.common.restartstrategy.RestartStrategies;
 import org.apache.flink.api.common.serialization.SimpleStringEncoder;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
 import org.apache.flink.api.common.state.AggregatingState;
@@ -33,8 +34,12 @@ import org.apache.flink.configuration.ConfigOption;
 import org.apache.flink.configuration.ConfigOptions;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.core.fs.Path;
+import org.apache.flink.formats.parquet.ParquetBuilder;
+import org.apache.flink.formats.parquet.ParquetWriterFactory;
+import org.apache.flink.formats.parquet.avro.ParquetAvroWriters;
 import org.apache.flink.runtime.state.filesystem.FsStateBackend;
 import org.apache.flink.streaming.api.CheckpointingMode;
+import org.apache.flink.streaming.api.TimeCharacteristic;
 import org.apache.flink.streaming.api.datastream.BroadcastStream;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
@@ -46,12 +51,15 @@ import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.streaming.api.functions.ProcessFunction;
 import org.apache.flink.streaming.api.functions.co.BroadcastProcessFunction;
 import org.apache.flink.streaming.api.functions.co.CoFlatMapFunction;
+import org.apache.flink.streaming.api.functions.sink.filesystem.OutputFileConfig;
 import org.apache.flink.streaming.api.functions.sink.filesystem.StreamingFileSink;
+import org.apache.flink.streaming.api.functions.sink.filesystem.bucketassigners.DateTimeBucketAssigner;
 import org.apache.flink.streaming.api.functions.sink.filesystem.rollingpolicies.DefaultRollingPolicy;
 import org.apache.flink.streaming.api.functions.source.RichSourceFunction;
 import org.apache.flink.streaming.api.functions.windowing.AllWindowFunction;
 import org.apache.flink.streaming.api.functions.windowing.ProcessAllWindowFunction;
 import org.apache.flink.streaming.api.windowing.assigners.GlobalWindows;
+import org.apache.flink.streaming.api.windowing.assigners.SlidingProcessingTimeWindows;
 import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows;
 import org.apache.flink.streaming.api.windowing.assigners.TumblingProcessingTimeWindows;
 import org.apache.flink.streaming.api.windowing.time.Time;
@@ -66,6 +74,8 @@ import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 import org.apache.flink.util.Collector;
 import org.apache.flink.util.IOUtils;
 import org.apache.flink.util.OutputTag;
+import org.apache.parquet.hadoop.ParquetWriter;
+import org.apache.parquet.io.OutputFile;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -74,13 +84,17 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 
+import akka.stream.impl.io.FileSink;
 import utils.DataProductUtil;
+import utils.DateTimeUtil;
+import utils.MyDataBean;
 
 
 /**
@@ -113,10 +127,9 @@ public class StreamApplication {
 //        stateTest(env);
 //        joinAndCoGroup(env);
 //        eventTimeWindows(env);
-        timerTest(env);
+        fileSinkTest(env);
 
         env.execute();
-
     }
 
     private static void connect(StreamExecutionEnvironment env) {
@@ -750,8 +763,10 @@ public class StreamApplication {
     }
 
     private static void eventTimeWindows(StreamExecutionEnvironment environment) {
+
         environment.enableCheckpointing(5000);
         environment.getCheckpointConfig().setMinPauseBetweenCheckpoints(3000);
+        environment.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
 
         DataStream<Tuple2<Integer, String>> dataStream = DataProductUtil.getWaterMarkData(environment);
 
@@ -809,6 +824,28 @@ public class StreamApplication {
 
     }
 
+    private static void fileSinkTest(StreamExecutionEnvironment environment) {
 
+        DataStream<Tuple2<Integer, String>> dataStream = DataProductUtil.getUnlimitedDataStreamOne(environment);
+        environment.enableCheckpointing(15000);
+        environment.getCheckpointConfig().setMinPauseBetweenCheckpoints(20000);
+        environment.getCheckpointConfig().setMaxConcurrentCheckpoints(1);
+
+        environment.setStateBackend(new FsStateBackend("hdfs://10.0.6.93/state_backend_dir/"));
+
+        OutputFileConfig outputFileConfig = new OutputFileConfig("test", ".parquet");
+
+        StreamingFileSink<MyDataBean> fileSink = StreamingFileSink
+                .forBulkFormat(new Path("hdfs://10.0.6.93/output_test/"), ParquetAvroWriters.forReflectRecord(MyDataBean.class))
+                .withBucketAssigner(new DateTimeBucketAssigner<>("yyyy-MM-dd-HH-mm", ZoneId.of("Asia/Shanghai")))
+//                .withRollingPolicy(DefaultRollingPolicy.builder().withRolloverInterval(60000l).withMaxPartSize(1024 * 1024).build())
+                .withOutputFileConfig(outputFileConfig)
+                .build();
+//.map(value -> value.f0 + " -> " + value.f1)
+
+        dataStream.map(value -> new MyDataBean(value.f0 + " -> " + value.f1))
+                .addSink(fileSink).setParallelism(4);
+
+    }
 
 }
