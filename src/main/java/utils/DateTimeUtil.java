@@ -10,9 +10,7 @@ import java.time.format.DateTimeFormatter;
  * @E-Mail 1544579459.djh@gmail.com
  */
 public class DateTimeUtil {
-    public static void main(String[] args) {
-        System.out.println(convertStringTime(1628057240000L));
-    }
+
 
     /**
      * 用于分区dt字段.

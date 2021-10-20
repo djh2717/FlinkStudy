@@ -1,8 +1,11 @@
+package apps;
+
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.JobExecutionResult;
 import org.apache.flink.api.common.accumulators.IntCounter;
 import org.apache.flink.api.common.eventtime.SerializableTimestampAssigner;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
+import org.apache.flink.api.common.functions.AggregateFunction;
 import org.apache.flink.api.common.functions.CoGroupFunction;
 import org.apache.flink.api.common.functions.JoinFunction;
 import org.apache.flink.api.common.functions.MapFunction;
@@ -22,6 +25,7 @@ import org.apache.flink.api.common.state.ReducingState;
 import org.apache.flink.api.common.state.ReducingStateDescriptor;
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
+import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
 import org.apache.flink.api.common.typeinfo.TypeHint;
 import org.apache.flink.api.common.typeinfo.Types;
 import org.apache.flink.api.java.DataSet;
@@ -38,6 +42,7 @@ import org.apache.flink.formats.parquet.ParquetBuilder;
 import org.apache.flink.formats.parquet.ParquetWriterFactory;
 import org.apache.flink.formats.parquet.avro.ParquetAvroWriters;
 import org.apache.flink.runtime.state.filesystem.FsStateBackend;
+import org.apache.flink.runtime.state.memory.MemoryStateBackend;
 import org.apache.flink.streaming.api.CheckpointingMode;
 import org.apache.flink.streaming.api.TimeCharacteristic;
 import org.apache.flink.streaming.api.datastream.BroadcastStream;
@@ -58,6 +63,7 @@ import org.apache.flink.streaming.api.functions.sink.filesystem.rollingpolicies.
 import org.apache.flink.streaming.api.functions.source.RichSourceFunction;
 import org.apache.flink.streaming.api.functions.windowing.AllWindowFunction;
 import org.apache.flink.streaming.api.functions.windowing.ProcessAllWindowFunction;
+import org.apache.flink.streaming.api.functions.windowing.ProcessWindowFunction;
 import org.apache.flink.streaming.api.windowing.assigners.GlobalWindows;
 import org.apache.flink.streaming.api.windowing.assigners.SlidingProcessingTimeWindows;
 import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows;
@@ -127,7 +133,9 @@ public class StreamApplication {
 //        stateTest(env);
 //        joinAndCoGroup(env);
 //        eventTimeWindows(env);
-        fileSinkTest(env);
+//        fileSinkTest(env);
+        processFunctionAndAggrTest(env);
+
 
         env.execute();
     }
@@ -825,6 +833,7 @@ public class StreamApplication {
     }
 
     private static void fileSinkTest(StreamExecutionEnvironment environment) {
+        environment.getConfig().enableObjectReuse();
 
         DataStream<Tuple2<Integer, String>> dataStream = DataProductUtil.getUnlimitedDataStreamOne(environment);
         environment.enableCheckpointing(15000);
@@ -836,16 +845,71 @@ public class StreamApplication {
         OutputFileConfig outputFileConfig = new OutputFileConfig("test", ".parquet");
 
         StreamingFileSink<MyDataBean> fileSink = StreamingFileSink
+                // 行编码和批量编码的区别不仅仅只在写出文件的格式和编码方式有区别,还在文件的滚动策略上有区别,批量编码只能用checkpoint滚动策略.
+                // fileSink 要注意的就是批量编码的时候只能用 checkpoint 的文件滚动策略. 另外加就是批量编码的输出factory需要自己去实现.
                 .forBulkFormat(new Path("hdfs://10.0.6.93/output_test/"), ParquetAvroWriters.forReflectRecord(MyDataBean.class))
                 .withBucketAssigner(new DateTimeBucketAssigner<>("yyyy-MM-dd-HH-mm", ZoneId.of("Asia/Shanghai")))
-//                .withRollingPolicy(DefaultRollingPolicy.builder().withRolloverInterval(60000l).withMaxPartSize(1024 * 1024).build())
+                //.withRollingPolicy(DefaultRollingPolicy.builder().withRolloverInterval(60000l).withMaxPartSize(1024 * 1024).build())
                 .withOutputFileConfig(outputFileConfig)
                 .build();
-//.map(value -> value.f0 + " -> " + value.f1)
 
         dataStream.map(value -> new MyDataBean(value.f0 + " -> " + value.f1))
                 .addSink(fileSink).setParallelism(4);
 
+
+        environment.getCheckpointConfig().enableUnalignedCheckpoints();
+
     }
+
+    private static void processFunctionAndAggrTest(StreamExecutionEnvironment streamExecutionEnvironment) {
+        DataStream<Tuple2<Integer, String>> dataStream = DataProductUtil.getUnlimitedDataStreamOne(streamExecutionEnvironment);
+
+
+        dataStream.keyBy(value -> value.f0)
+                .window(TumblingProcessingTimeWindows.of(Time.seconds(10)))
+                // 把 aggregation 增量聚合和 processFunction配合使用可以更加高效,即可以使用增量迭代又可以用到processFunction相关的底层特性.
+                // 这样的话processFunction的Element中只会有一个元素,就某一个key聚合之后的结果值.
+                // 不然的话就单独使用 processFunction 的话对窗口内的函数不会做增量聚合处理,会缓存窗口中的所有元素,当窗口较大时会存在性能问题.
+                .aggregate(new AggregateFunction<Tuple2<Integer, String>, Integer, Integer>() {
+
+                               @Override
+                               public Integer createAccumulator() {
+                                   return 0;
+                               }
+
+                               @Override
+                               public Integer add(Tuple2<Integer, String> value, Integer accumulator) {
+                                   return accumulator + value.f0;
+                               }
+
+                               @Override
+                               public Integer getResult(Integer accumulator) {
+                                   return accumulator;
+                               }
+
+                               @Override
+                               public Integer merge(Integer a, Integer b) {
+                                   return a + b;
+                               }
+                           },
+                        new ProcessWindowFunction<Integer, String, Integer, TimeWindow>() {
+                            @Override
+                            public void process(Integer integer, ProcessWindowFunction<Integer, String, Integer, TimeWindow>.Context context, Iterable<Integer> elements, Collector<String> out) throws Exception {
+                                int count = 0;
+                                for (Integer element : elements) {
+                                    count++;
+                                }
+                                out.collect("窗口信息:" + context.window() + "  Key:" + integer + "  元素个数:" + count + "   Value为:" + elements.iterator().next());
+                            }
+                        })
+                .print();
+
+        // 输出
+        //3> 窗口信息:TimeWindow{start=1631157870000, end=1631157880000}  Key:1  元素个数:1   Value为:3
+        //4> 窗口信息:TimeWindow{start=1631157870000, end=1631157880000}  Key:2  元素个数:1   Value为:6
+        //4> 窗口信息:TimeWindow{start=1631157870000, end=1631157880000}  Key:5  元素个数:1   Value为:15
+        //4> 窗口信息:TimeWindow{start=1631157870000, end=1631157880000}  Key:3  元素个数:1   Value为:18
+    }
+
 
 }

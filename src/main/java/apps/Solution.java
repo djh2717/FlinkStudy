@@ -1,3 +1,5 @@
+package apps;
+
 import org.apache.flink.api.java.ExecutionEnvironment;
 import org.apache.flink.table.api.EnvironmentSettings;
 import org.apache.flink.table.api.SqlDialect;

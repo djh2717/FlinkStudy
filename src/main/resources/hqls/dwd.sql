@@ -43,7 +43,7 @@ create table if not exists default.dwd_car_action
     open_airCondition_action      int comment "Air conditioning behavior",
     close_airCondition_action     int comment "Turn off air conditioning",
     close_driverBelt_action       int comment "Tying the driver's seat belt",
-    open_driverBelt_action        int comment "Solution of driving seat belt behavior",
+    open_driverBelt_action        int comment "apps.Solution of driving seat belt behavior",
     close_coDriverBelt_action     int comment "The act of tying the passenger seat belt",
     open_coDriverBelt_action      int comment "Solve the seat belt behavior of the co-driver",
     epe_eventtime                 timestamp,
